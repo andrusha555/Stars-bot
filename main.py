@@ -51,18 +51,32 @@ def start_cmd(message):
     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("recipient_"))
+# Обработка выбора получателя
+@bot.callback_query_handler(func=lambda call: call.data.startswith("recipient_"))
 def handle_recipient(call):
     chat_id = call.message.chat.id
     recipient_type = call.data.split("_")[1]
+    
     orders[chat_id]['recipient_type'] = recipient_type
     
     if recipient_type == "self":
-        msg = bot.send_message(chat_id, "✍️ Укажите ваш юзернейм в Telegram (например, `@username`):")
-        bot.register_next_step_handler(msg, get_username)
+        # АВТОМАТИЧЕСКИ ПОЛУЧАЕМ ЮЗЕРНЕЙМ
+        if call.from_user.username:
+            username = "@" + call.from_user.username
+        else:
+            # Если у человека нет юзернейма (@...), берем его Имя и ID
+            username = f"{call.from_user.first_name} (ID: {call.from_user.id})"
+            
+        orders[chat_id]['username'] = username
+        
+        # Сразу переходим к запросу количества звезд
+        msg = bot.send_message(chat_id, f"✅ Вы выбрали: себе ({username})\n\n🔢 Какое количество звезд вы хотите приобрести? (Введите число):")
+        bot.register_next_step_handler(msg, get_amount)
+        
     else:
+        # Если выбрали "Другу", спрашиваем юзернейм как раньше
         msg = bot.send_message(chat_id, "✍️ Укажите юзернейм вашего друга (например, `@friend_username`):")
         bot.register_next_step_handler(msg, get_username)
-
 def get_username(message):
     chat_id = message.chat.id
     username = message.text.strip()
