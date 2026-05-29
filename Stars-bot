@@ -1,0 +1,146 @@
+import telebot
+from telebot import types
+
+# ================= НАСТРОЙКИ (ЗАМЕНИТЕ НА СВОИ) =================
+API_TOKEN = '8856437407:AAFCPsaE9X6tbqRRdXNG9z6t-MbW8ew5p3w'
+ADMIN_ID = 5105755553  # СЮДА ВСТАВЬ СВОЙ ID ИЗ @getmyid_bot
+REQUISITES = "СБП  / Сбербанк: +7 999 555 333 (Получатель: Иван И.)"
+PRICE_PER_STAR = 1.25  # Цена за 1 звезду
+# ================================================================
+
+bot = telebot.TeleBot(API_TOKEN)
+
+# Временная память для заказов клиентов в оперативной памяти
+orders = {}
+
+# Команда /start
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    chat_id = message.chat.id
+    orders[chat_id] = {} # Сбрасываем старые данные при перезапуске
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_self = types.InlineKeyboardButton("Себе 👤", callback_data="recipient_self")
+    btn_friend = types.InlineKeyboardButton("Другу 🎁", callback_data="recipient_friend")
+    markup.add(btn_self, btn_friend)
+    
+    bot.send_message(
+        chat_id, 
+        "👋 **Добро пожаловать!**\n\n"
+        "В нашем боте вы можете приобрести Telegram Stars намного дешевле, чем напрямую через приложение.\n"
+        f"🔥 Текущий курс: **1 Звезда = {PRICE_PER_STAR} ₽**\n\n"
+        "Кому вы хотите отправить звезды?",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+# Обработка выбора получателя
+@bot.callback_query_handler(func=lambda call: call.data.startswith("recipient_"))
+def handle_recipient(call):
+    chat_id = call.message.chat.id
+    recipient_type = call.data.split("_")[1]
+    
+    orders[chat_id]['recipient_type'] = recipient_type
+    
+    if recipient_type == "self":
+        # Если себе, запрашиваем юзернейм самого покупателя
+        msg = bot.send_message(chat_id, "✍️ Укажите ваш юзернейм в Telegram (например, `@username`):")
+        bot.register_next_step_handler(msg, get_username)
+    else:
+        # Если другу
+        msg = bot.send_message(chat_id, "✍️ Укажите юзернейм вашего друга (например, `@friend_username`):")
+        bot.register_next_step_handler(msg, get_username)
+
+# Получение юзернейма
+def get_username(message):
+    chat_id = message.chat.id
+    username = message.text.strip()
+    
+    # Автоматически добавляем @ в начало, если пользователь его забыл
+    if not username.startswith('@'):
+        username = '@' + username
+        
+    orders[chat_id]['username'] = username
+    
+    msg = bot.send_message(chat_id, "🔢 Какое количество звезд вы хотите приобрести? (Введите число):") bot.register_next_step_handler(msg, get_amount)
+
+# Получение количества звезд и расчет стоимости
+def get_amount(message):
+    chat_id = message.chat.id
+    text = message.text.strip()
+    
+    if not text.isdigit() or int(text) <= 0:
+        msg = bot.send_message(chat_id, "❌ Пожалуйста, введите корректное число звезд:")
+        bot.register_next_step_handler(msg, get_amount)
+        return
+        
+    amount = int(text)
+    total_cost = round(amount * PRICE_PER_STAR, 2)
+    
+    orders[chat_id]['amount'] = amount
+    orders[chat_id]['cost'] = total_cost
+    
+    markup = types.InlineKeyboardMarkup()
+    btn_confirm = types.InlineKeyboardButton("✅ Я оплатил(а)", callback_data="confirm_payment")
+    btn_cancel = types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_order")
+    markup.add(btn_confirm, btn_cancel)
+    
+    bot.send_message(
+        chat_id,
+        f"📊 **Ваш заказ сформирован**\n"
+        f"Получатель: {orders[chat_id]['username']}\n"
+        f"Количество звезд: {amount} 🌟\n"
+        f"Сумма к оплате: **{total_cost} ₽**\n\n"
+        f"💳 **Реквизиты для оплаты:**\n`{REQUISITES}`\n\n"
+        f"⚠️ Переведите точную сумму ({total_cost} ₽) по реквизитам выше. "
+        f"После перевода нажмите кнопку **«Я оплатил(а)»** ниже.",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+# Обработка подтверждения оплаты или отмены
+@bot.callback_query_handler(func=lambda call: call.data in ["confirm_payment", "cancel_order"])
+def handle_payment_status(call):
+    chat_id = call.message.chat.id
+    
+    if call.data == "cancel_order":
+        bot.send_message(chat_id, "❌ Заказ отменен. Чтобы начать заново, напишите /start")
+        orders[chat_id] = {}
+        return
+
+    # Если нажали "Я оплатил"
+    order = orders.get(chat_id)
+    if not order or 'amount' not in order:
+        bot.send_message(chat_id, "⚠️ Произошла ошибка. Пожалуйста, начните заново, прописав /start")
+        return
+    
+    # 1. Отправляем уведомление вам (админу)
+    buyer_info = f"@{call.from_user.username}" if call.from_user.username else f"ID: {chat_id}"
+    admin_message = (
+        f"🔔 **НОВЫЙ ЗАКАЗ ОПЛАЧЕН!**\n\n"
+        f"👤 Покупатель: {buyer_info}\n"
+        f"👉 Кому отправлять: **{order['username']}**\n"
+        f"🌟 Количество звезд: **{order['amount']}** шт.\n"
+        f"💰 Ожидаемая сумма: **{order['cost']} ₽**\n\n"
+        f"Проверьте поступление денег и выполните отправку!"
+    )
+    
+    try:
+        bot.send_message(ADMIN_ID, admin_message, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Не удалось отправить сообщение админу: {e}")
+
+    # 2. Отвечаем покупателю
+    bot.send_message(
+        chat_id, 
+        "🎉 **Заявка отправлена на проверку!**\n"
+        "Администратор проверяет оплату и отправит вам звезды в ближайшее время. Спасибо за покупку!"
+    )
+    
+    # Очищаем данные сессии
+    orders[chat_id] = {}
+
+# Запуск бота
+if __name__ == "__main__":
+    print("Бот запущен...")
+    bot.infinity_polling()
